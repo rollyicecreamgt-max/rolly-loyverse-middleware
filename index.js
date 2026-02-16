@@ -85,7 +85,7 @@ app.get("/loyverse/items", async (req, res) => {
 });
 app.get("/loyverse/variants", async (req, res) => {
   try {
-    const response = await fetch("https://api.loyverse.com/v1.0/item_variants", {
+    const response = await fetch("https://api.loyverse.com/v1.0/variants", {
       headers: {
         Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
         "Content-Type": "application/json"
