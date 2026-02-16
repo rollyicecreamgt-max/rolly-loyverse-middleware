@@ -122,3 +122,45 @@ app.get("/loyverse/variants", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+app.get("/loyverse/catalog", async (req, res) => {
+  try {
+    // 1) Traer items (para obtener nombre por item_id)
+    const itemsResp = await fetch("https://api.loyverse.com/v1.0/items", {
+      headers: {
+        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    });
+    const itemsData = await itemsResp.json();
+    if (!itemsResp.ok) return res.status(500).json({ error: itemsData });
+
+    // 2) Crear mapa item_id -> item_name
+    const itemsList = itemsData.items || [];
+    const itemNameById = new Map(itemsList.map(i => [i.id, i.item_name]));
+
+    // 3) Traer variants (para obtener variant_id por item_id)
+    const varResp = await fetch("https://api.loyverse.com/v1.0/variants", {
+      headers: {
+        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    });
+    const varData = await varResp.json();
+    if (!varResp.ok) return res.status(500).json({ error: varData });
+
+    const variantsList = varData.variants || [];
+
+    // 4) Enriquecer: item_name + variant_id
+    const enriched = variantsList.map(v => ({
+      item_id: v.item_id,
+      item_name: itemNameById.get(v.item_id) || null,
+      variant_id: v.id,
+      // dejamos el objeto completo por si Loyverse trae más campos (ej. option values)
+      raw: v
+    }));
+
+    res.json({ count: enriched.length, variants: enriched });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
