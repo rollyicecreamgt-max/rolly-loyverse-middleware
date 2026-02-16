@@ -1,6 +1,7 @@
 {
   "name": "rolly-loyverse-middleware",
   "version": "1.0.0",
+  "type": "module",
   "description": "Middleware GPT → Loyverse for Rolly Ice Cream",
   "main": "index.js",
   "scripts": {
