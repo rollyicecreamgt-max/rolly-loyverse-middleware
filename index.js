@@ -23,7 +23,7 @@ app.post("/orders", async (req, res) => {
     if (!store_id) return res.status(500).json({ error: "Missing LOYVERSE_STORE_ID env var" });
     if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
 
-    const { line_items, note } = req.body || {};
+    const { line_items, note, payments } = req.body || {};
 
     // Validación mínima
     if (!Array.isArray(line_items) || line_items.length === 0) {
@@ -38,6 +38,18 @@ app.post("/orders", async (req, res) => {
         }
       });
     }
+    
+if (!Array.isArray(payments) || payments.length === 0) {
+  return res.status(400).json({
+    error: "Invalid payload",
+    details: "payments must be a non-empty array",
+    example: {
+      line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Helado Natural - Vainilla - Normal" }],
+      payments: [{ payment_type_id: "UUID", money_amount: 27.00 }],
+      note: "Pedido GPT - Mostrador"
+    }
+  });
+}
 
     for (const [i, li] of line_items.entries()) {
       if (!li?.variant_id || typeof li.variant_id !== "string") {
@@ -50,15 +62,20 @@ app.post("/orders", async (req, res) => {
 
     // Payload a Loyverse (receipt)
     const payload = {
-      store_id,
-      note: note || "Pedido GPT - Mostrador",
-      line_items: line_items.map((li) => ({
-        variant_id: li.variant_id,
-        quantity: li.quantity,
-        // Si Loyverse ignora line_note, igual lo dejamos para ticket/registro.
-        line_note: li.line_note || ""
-      }))
-    };
+  store_id,
+  note: note || "Pedido GPT - Mostrador",
+  line_items: line_items.map((li) => ({
+    variant_id: li.variant_id,
+    quantity: li.quantity,
+    // Si Loyverse ignora line_note, igual lo dejamos para ticket/registro.
+    line_note: li.line_note || ""
+  })),
+  payments: payments.map((p) => ({
+    payment_type_id: p.payment_type_id,
+    money_amount: Number(p.money_amount),
+    paid_at: p.paid_at || new Date().toISOString()
+  }))
+};
 
     const response = await fetch("https://api.loyverse.com/v1.0/receipts", {
       method: "POST",
