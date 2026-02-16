@@ -17,35 +17,77 @@ app.get("/health", (req, res) => {
 // Create order
 app.post("/orders", async (req, res) => {
   try {
-    const order = req.body;
+    const store_id = process.env.LOYVERSE_STORE_ID;
+    const token = process.env.LOYVERSE_TOKEN;
 
-    if (!order || !order.items || order.items.length === 0) {
-      return res.status(400).json({ error: "Order inválida" });
+    if (!store_id) return res.status(500).json({ error: "Missing LOYVERSE_STORE_ID env var" });
+    if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
+
+    const { line_items, note } = req.body || {};
+
+    // Validación mínima
+    if (!Array.isArray(line_items) || line_items.length === 0) {
+      return res.status(400).json({
+        error: "Invalid payload",
+        details: "line_items must be a non-empty array",
+        example: {
+          line_items: [
+            { variant_id: "UUID", quantity: 1, line_note: "Helado Natural de Fresa - Normal" }
+          ],
+          note: "Pedido GPT - Mostrador"
+        }
+      });
     }
 
-    const response = await axios.post(
-      "https://api.loyverse.com/v1.0/receipts",
-      {
-        line_items: order.items,
-        note: order.note || "Pedido generado por GPT"
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${LOYVERSE_TOKEN}`,
-          "Content-Type": "application/json"
-        }
+    for (const [i, li] of line_items.entries()) {
+      if (!li?.variant_id || typeof li.variant_id !== "string") {
+        return res.status(400).json({ error: "Invalid line_items", details: `line_items[${i}].variant_id required` });
       }
-    );
+      if (!li?.quantity || typeof li.quantity !== "number" || li.quantity <= 0) {
+        return res.status(400).json({ error: "Invalid line_items", details: `line_items[${i}].quantity must be > 0 (number)` });
+      }
+    }
 
-    res.json({
-      success: true,
-      receipt_id: response.data.id,
-      receipt_number: response.data.receipt_number
+    // Payload a Loyverse (receipt)
+    const payload = {
+      store_id,
+      note: note || "Pedido GPT - Mostrador",
+      line_items: line_items.map((li) => ({
+        variant_id: li.variant_id,
+        quantity: li.quantity,
+        // Si Loyverse ignora line_note, igual lo dejamos para ticket/registro.
+        line_note: li.line_note || ""
+      }))
+    };
+
+    const response = await fetch("https://api.loyverse.com/v1.0/receipts", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
     });
 
-  } catch (error) {
-    console.error(error.response?.data || error.message);
-    res.status(500).json({ error: "Error creando receipt en Loyverse" });
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+    if (!response.ok) {
+      return res.status(400).json({
+        error: "LOYVERSE_REJECTED_RECEIPT",
+        status: response.status,
+        loyverse: data,
+        sent_payload: payload
+      });
+    }
+
+    return res.status(200).json({
+      ok: true,
+      receipt: data
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
