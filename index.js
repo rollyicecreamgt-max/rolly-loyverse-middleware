@@ -52,3 +52,34 @@ app.post("/orders", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Rolly middleware running on port ${PORT}`);
 });
+app.get("/loyverse/items", async (req, res) => {
+  try {
+    const response = await fetch("https://api.loyverse.com/v1.0/items", {
+      headers: {
+        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(500).json({ error: text });
+    }
+
+    const data = await response.json();
+
+    const simplified = data.items.map(item => ({
+      item_id: item.id,
+      name: item.item_name,
+      variants: item.variants.map(v => ({
+        variant_id: v.id,
+        variant_name: v.variant_name,
+        price: v.price
+      }))
+    }));
+
+    res.json(simplified);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
