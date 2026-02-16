@@ -92,21 +92,32 @@ app.get("/loyverse/variants", async (req, res) => {
       }
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(500).json({ error: text });
-    }
-
     const data = await response.json();
 
-    const simplified = data.item_variants.map(v => ({
+    // Si Loyverse devuelve error, lo devolvemos tal cual para ver el detalle
+    if (!response.ok) {
+      return res.status(500).json({ error: data });
+    }
+
+    // La lista puede venir con distintas llaves
+    const list =
+      data.variants ||
+      data.item_variants ||
+      data.items ||
+      data.data ||
+      [];
+
+    const simplified = list.map(v => ({
       variant_id: v.id,
       item_id: v.item_id,
       variant_name: v.variant_name,
       price: v.price
     }));
 
-    res.json(simplified);
+    res.json({
+      count: simplified.length,
+      variants: simplified
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
