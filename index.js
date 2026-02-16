@@ -83,3 +83,31 @@ app.get("/loyverse/items", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+app.get("/loyverse/variants", async (req, res) => {
+  try {
+    const response = await fetch("https://api.loyverse.com/v1.0/item_variants", {
+      headers: {
+        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      return res.status(500).json({ error: text });
+    }
+
+    const data = await response.json();
+
+    const simplified = data.item_variants.map(v => ({
+      variant_id: v.id,
+      item_id: v.item_id,
+      variant_name: v.variant_name,
+      price: v.price
+    }));
+
+    res.json(simplified);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
