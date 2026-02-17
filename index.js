@@ -123,8 +123,9 @@ app.get("/loyverse/catalog", async (req, res) => {
  */
 
 app.post("/orders", async (req, res) => {
-  console.log("✅ POST /orders hit");
-  console.log("Body:", JSON.stringify(req.body, null, 2));
+  const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  console.log(`✅ [${requestId}] POST /orders hit`);
+  console.log(`🧾 [${requestId}] Body:`, JSON.stringify(req.body, null, 2));
 
   try {
     const store_id = requireEnv("LOYVERSE_STORE_ID");
@@ -137,6 +138,7 @@ app.post("/orders", async (req, res) => {
       return res.status(400).json({
         error: "INVALID_PAYLOAD",
         details: "line_items must be a non-empty array",
+        request_id: requestId,
       });
     }
 
@@ -144,43 +146,41 @@ app.post("/orders", async (req, res) => {
       return res.status(400).json({
         error: "INVALID_PAYLOAD",
         details: "payment_type_id is required (string)",
+        request_id: requestId,
       });
     }
 
     for (const [i, li] of line_items.entries()) {
       if (!li?.variant_id || typeof li.variant_id !== "string") {
-        return res.status(400).json({ error: "INVALID_LINE_ITEMS", details: `line_items[${i}].variant_id required` });
+        return res.status(400).json({
+          error: "INVALID_LINE_ITEMS",
+          details: `line_items[${i}].variant_id required`,
+          request_id: requestId,
+        });
       }
-const qty = Number(li.quantity);
-if (!Number.isFinite(qty) || qty <= 0) {
-  return res.status(400).json({
-    error: "INVALID_LINE_ITEMS",
-    details: `line_items[${i}].quantity must be a number > 0`,
-  });
-}
-li.quantity = qty;
+      if (typeof li.quantity !== "number" || li.quantity <= 0) {
+        return res.status(400).json({
+          error: "INVALID_LINE_ITEMS",
+          details: `line_items[${i}].quantity must be > 0`,
+          request_id: requestId,
+        });
+      }
+    }
 
     // 1) Traer variants para precios
     const varsResp = await api.get("/variants");
     const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
+    // NOTA: algunos responses traen v.id, otros v.variant_id
     const priceByVariantId = new Map(
-  variants
-    .map((v) => {
-      const vid = v?.id || v?.variant_id || v?.raw?.variant_id;
-      const price =
-        v?.default_price ??
-        v?.price ??
-        v?.raw?.default_price ??
-        v?.raw?.stores?.[0]?.price ??
-        0;
-
-      return [vid, Number(price)];
-    })
-    .filter(([vid]) => !!vid)
-);
-    
-console.log("priceByVariantId sample:", Array.from(priceByVariantId.entries()).slice(0, 5));
+      variants
+        .map((v) => ({
+          id: v?.id ?? v?.variant_id,
+          price: Number(v?.default_price ?? v?.price ?? 0),
+        }))
+        .filter((x) => x.id)
+        .map((x) => [x.id, x.price])
+    );
 
     // 2) Calcular total
     let total = 0;
@@ -190,6 +190,7 @@ console.log("priceByVariantId sample:", Array.from(priceByVariantId.entries()).s
         return res.status(400).json({
           error: "UNKNOWN_VARIANT_ID",
           details: `variant_id not found in Loyverse: ${li.variant_id}`,
+          request_id: requestId,
         });
       }
       total += price * li.quantity;
@@ -213,34 +214,33 @@ console.log("priceByVariantId sample:", Array.from(priceByVariantId.entries()).s
       ],
     };
 
+    console.log(`📤 [${requestId}] Sending to Loyverse /receipts payload:`, JSON.stringify(payload, null, 2));
+
     const receiptResp = await api.post("/receipts", payload);
 
-// log de auditoría
-console.log("🧾 Receipt created in Loyverse:", {
-  receipt_number: receiptResp.data?.receipt_number,
-  receipt_id: receiptResp.data?.id,
-  total: total,
-  payment_type_id: payment_type_id,
-});
+    console.log(`✅ [${requestId}] Loyverse receipt created:`, receiptResp?.data?.receipt_number);
 
     return res.status(200).json({
       ok: true,
-      receipt: receiptResp.data,
       computed_total: total,
+      receipt: receiptResp.data,
+      request_id: requestId,
     });
   } catch (err) {
-    console.error("❌ Order failed", {
-  body: req.body,
-  message: err?.message,
-  loyverse: err?.response?.data || null,
-});
-    
     const status = err?.response?.status || 500;
+
+    console.log(`❌ [${requestId}] LOYVERSE_ORDER_ERROR status=${status}`);
+    console.log(`❌ [${requestId}] message:`, err?.message || String(err));
+    if (err?.response?.data) {
+      console.log(`❌ [${requestId}] loyverse:`, JSON.stringify(err.response.data, null, 2));
+    }
+
     return res.status(status).json({
       error: "LOYVERSE_ORDER_ERROR",
       status,
       loyverse: err?.response?.data || null,
       message: err?.message || String(err),
+      request_id: requestId,
     });
   }
 });
