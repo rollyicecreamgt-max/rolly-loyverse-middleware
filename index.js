@@ -270,37 +270,52 @@ app.get("/loyverse/variants", async (req, res) => {
 app.get("/loyverse/catalog", async (req, res) => {
   try {
     const token = process.env.LOYVERSE_TOKEN;
+    if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
 
-    // Items
-    const itemsResp = await fetch("https://api.loyverse.com/v1.0/items", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
+    async function fetchAll(urlBase) {
+      let all = [];
+      let cursor = null;
+
+      while (true) {
+        const url = cursor ? `${urlBase}?cursor=${encodeURIComponent(cursor)}` : urlBase;
+
+        const r = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          }
+        });
+
+        const data = await r.json();
+        if (!r.ok) {
+          throw new Error(JSON.stringify(data));
+        }
+
+        // Loyverse suele devolver {items:[...], cursor:"..."} o {variants:[...], cursor:"..."}
+        const list =
+          data.items ||
+          data.variants ||
+          data.item_variants ||
+          [];
+
+        all.push(...list);
+
+        if (!data.cursor) break;
+        cursor = data.cursor;
       }
-    });
-    const itemsText = await itemsResp.text();
-    let itemsData;
-    try { itemsData = JSON.parse(itemsText); } catch { itemsData = { raw: itemsText }; }
-    if (!itemsResp.ok) return res.status(500).json({ error: itemsData });
 
-    const itemsList = itemsData.items || [];
-    const itemNameById = new Map(itemsList.map((i) => [i.id, i.item_name]));
+      return all;
+    }
 
-    // Variants
-    const varResp = await fetch("https://api.loyverse.com/v1.0/variants", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json"
-      }
-    });
-    const varText = await varResp.text();
-    let varData;
-    try { varData = JSON.parse(varText); } catch { varData = { raw: varText }; }
-    if (!varResp.ok) return res.status(500).json({ error: varData });
+    // 1) Traer TODOS los items
+    const itemsList = await fetchAll("https://api.loyverse.com/v1.0/items");
+    const itemNameById = new Map(itemsList.map(i => [i.id, i.item_name]));
 
-    const variantsList = varData.variants || [];
+    // 2) Traer TODOS los variants (en tu catálogo previo usabas /variants)
+    const variantsList = await fetchAll("https://api.loyverse.com/v1.0/variants");
 
-    const enriched = variantsList.map((v) => ({
+    // 3) Enriquecer
+    const enriched = variantsList.map(v => ({
       item_id: v.item_id,
       item_name: itemNameById.get(v.item_id) || null,
       variant_id: v.id,
@@ -311,8 +326,4 @@ app.get("/loyverse/catalog", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
-});
-
-app.listen(PORT, () => {
-  console.log(`Rolly middleware running on port ${PORT}`);
 });
