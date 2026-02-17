@@ -50,6 +50,15 @@ if (!Array.isArray(payments) || payments.length === 0) {
     }
   });
 }
+    
+for (const [i, p] of payments.entries()) {
+  if (!p?.payment_type_id || typeof p.payment_type_id !== "string") {
+    return res.status(400).json({ error: "Invalid payments", details: `payments[${i}].payment_type_id required` });
+  }
+  if (p?.money_amount === undefined || p?.money_amount === null || Number(p.money_amount) <= 0) {
+    return res.status(400).json({ error: "Invalid payments", details: `payments[${i}].money_amount must be > 0` });
+  }
+}
 
     for (const [i, li] of line_items.entries()) {
       if (!li?.variant_id || typeof li.variant_id !== "string") {
