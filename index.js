@@ -83,7 +83,7 @@ if (!variantsResp.ok) {
   return res.status(500).json({ error: "FAILED_TO_LOAD_VARIANTS", loyverse: variantsData });
 }
 
-const variantsList = variantsData.variants || [];
+const variantsList = variantsData.item_variants || [];
 const priceByVariantId = new Map(
   variantsList
     .filter(v => v?.id)
