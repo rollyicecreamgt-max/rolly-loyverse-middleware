@@ -121,7 +121,6 @@ app.get("/loyverse/catalog", async (req, res) => {
  *
  * Calcula total con /variants y crea /receipts
  */
-app.use(express.json());
 
 app.post("/orders", async (req, res) => {
   console.log("✅ POST /orders hit");
@@ -162,10 +161,22 @@ app.post("/orders", async (req, res) => {
     const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
     const priceByVariantId = new Map(
-      variants
-        .filter((v) => v?.id)
-        .map((v) => [v.id, Number(v.default_price ?? v.price ?? 0)])
-    );
+  variants
+    .map((v) => {
+      const vid = v?.id || v?.variant_id || v?.raw?.variant_id;
+      const price =
+        v?.default_price ??
+        v?.price ??
+        v?.raw?.default_price ??
+        v?.raw?.stores?.[0]?.price ??
+        0;
+
+      return [vid, Number(price)];
+    })
+    .filter(([vid]) => !!vid)
+);
+    
+console.log("priceByVariantId sample:", Array.from(priceByVariantId.entries()).slice(0, 5));
 
     // 2) Calcular total
     let total = 0;
