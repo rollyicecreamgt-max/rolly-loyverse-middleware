@@ -121,7 +121,12 @@ app.get("/loyverse/catalog", async (req, res) => {
  *
  * Calcula total con /variants y crea /receipts
  */
+app.use(express.json());
+
 app.post("/orders", async (req, res) => {
+  console.log("✅ POST /orders hit");
+  console.log("Body:", JSON.stringify(req.body, null, 2));
+
   try {
     const store_id = requireEnv("LOYVERSE_STORE_ID");
     const api = loyverseClient();
