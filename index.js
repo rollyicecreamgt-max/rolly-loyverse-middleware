@@ -1,5 +1,4 @@
 import express from "express";
-import axios from "axios";
 import cors from "cors";
 
 const app = express();
@@ -7,14 +6,42 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const LOYVERSE_TOKEN = process.env.LOYVERSE_TOKEN;
 
 // Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// Create order
+// Helpers
+function toNumber(val) {
+  const n = Number(val);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+function getVariantPriceForStore(variant, storeId) {
+  // Prioridad:
+  // 1) Precio en stores[] para ese store_id
+  // 2) default_price
+  // 3) price
+  const storePrice =
+    Array.isArray(variant?.stores)
+      ? variant.stores.find((s) => s?.store_id === storeId)?.price
+      : undefined;
+
+  if (storePrice !== undefined && storePrice !== null) return toNumber(storePrice);
+
+  if (variant?.default_price !== undefined && variant?.default_price !== null) {
+    return toNumber(variant.default_price);
+  }
+
+  if (variant?.price !== undefined && variant?.price !== null) {
+    return toNumber(variant.price);
+  }
+
+  return NaN;
+}
+
+// Create order -> Create Loyverse receipt
 app.post("/orders", async (req, res) => {
   try {
     const store_id = process.env.LOYVERSE_STORE_ID;
@@ -23,103 +50,120 @@ app.post("/orders", async (req, res) => {
     if (!store_id) return res.status(500).json({ error: "Missing LOYVERSE_STORE_ID env var" });
     if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
 
-    const { line_items, note, payments = [] } = req.body || {};
+    const { line_items, note, payment_type_id } = req.body || {};
 
-    // Validación mínima
+    // Validación: line_items
     if (!Array.isArray(line_items) || line_items.length === 0) {
       return res.status(400).json({
         error: "Invalid payload",
         details: "line_items must be a non-empty array",
         example: {
-          line_items: [
-            { variant_id: "UUID", quantity: 1, line_note: "Helado Natural de Fresa - Normal" }
-          ],
+          line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Mora - Normal" }],
+          payment_type_id: "UUID",
           note: "Pedido GPT - Mostrador"
         }
       });
     }
-    
-if (!payment_type_id || typeof payment_type_id !== "string") {
-  return res.status(400).json({
-    error: "Invalid payload",
-    details: "payment_type_id is required (string)",
-    example: {
-      line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Helado Natural - Vainilla - Normal" }],
-      payment_type_id: "UUID",
-      note: "Pedido GPT - Mostrador"
-    }
-  });
-}
-    
-for (const [i, p] of payments.entries()) {
-  if (!p?.payment_type_id || typeof p.payment_type_id !== "string") {
-    return res.status(400).json({ error: "Invalid payments", details: `payments[${i}].payment_type_id required` });
-  }
-  if (p?.money_amount === undefined || p?.money_amount === null || Number(p.money_amount) <= 0) {
-    return res.status(400).json({ error: "Invalid payments", details: `payments[${i}].money_amount must be > 0` });
-  }
-}
 
+    // Validación: payment_type_id
+    if (!payment_type_id || typeof payment_type_id !== "string") {
+      return res.status(400).json({
+        error: "Invalid payload",
+        details: "payment_type_id is required (string)",
+        example: {
+          line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Mora - Normal" }],
+          payment_type_id: "UUID",
+          note: "Pedido GPT - Mostrador"
+        }
+      });
+    }
+
+    // Validación por item (acepta quantity como número o string numérica)
     for (const [i, li] of line_items.entries()) {
       if (!li?.variant_id || typeof li.variant_id !== "string") {
-        return res.status(400).json({ error: "Invalid line_items", details: `line_items[${i}].variant_id required` });
+        return res.status(400).json({
+          error: "Invalid line_items",
+          details: `line_items[${i}].variant_id required (string)`
+        });
       }
-      if (!li?.quantity || typeof li.quantity !== "number" || li.quantity <= 0) {
-        return res.status(400).json({ error: "Invalid line_items", details: `line_items[${i}].quantity must be > 0 (number)` });
+      const qty = toNumber(li?.quantity);
+      if (!Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({
+          error: "Invalid line_items",
+          details: `line_items[${i}].quantity must be > 0 (number)`
+        });
       }
     }
 
-    // Payload a Loyverse (receipt)
-  // 1) Traer variants para precios (una vez por request)
-const variantsResp = await fetch("https://api.loyverse.com/v1.0/item_variants", {
-  headers: {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json"
-  }
-});
-
-const variantsData = await variantsResp.json();
-if (!variantsResp.ok) {
-  return res.status(500).json({ error: "FAILED_TO_LOAD_VARIANTS", loyverse: variantsData });
-}
-
-const variantsList = variantsData.item_variants || [];
-const priceByVariantId = new Map(
-  variantsList
-    .filter(v => v?.id)
-    .map(v => [v.id, Number(v.default_price ?? v.price ?? 0)])
-);
-
-// 2) Calcular total
-let total = 0;
-for (const li of line_items) {
-  const price = priceByVariantId.get(li.variant_id);
-  if (price === undefined) {
-    return res.status(400).json({
-      error: "UNKNOWN_VARIANT_ID",
-      details: `variant_id not found in Loyverse: ${li.variant_id}`
+    // 1) Cargar variants para calcular total
+    const variantsResp = await fetch("https://api.loyverse.com/v1.0/variants", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
     });
-  }
-  total += price * li.quantity;
-}
 
-const payload = {
-  store_id,
-  note: note || "Pedido GPT - Mostrador",
-  line_items: line_items.map((li) => ({
-    variant_id: li.variant_id,
-    quantity: li.quantity,
-    line_note: li.line_note || ""
-  })),
-  payments: [
-    {
-      payment_type_id,
-      money_amount: Number(total),
-      paid_at: new Date().toISOString()
+    const variantsData = await variantsResp.json();
+    if (!variantsResp.ok) {
+      return res.status(500).json({
+        error: "FAILED_TO_LOAD_VARIANTS",
+        loyverse: variantsData
+      });
     }
-  ]
-};
 
+    const variantsList = variantsData.variants || [];
+
+    const variantById = new Map(
+      variantsList
+        .filter((v) => v?.id)
+        .map((v) => [v.id, v])
+    );
+
+    // 2) Calcular total con el precio real
+    let total = 0;
+
+    for (const li of line_items) {
+      const variant = variantById.get(li.variant_id);
+
+      if (!variant) {
+        return res.status(400).json({
+          error: "UNKNOWN_VARIANT_ID",
+          details: `variant_id not found in Loyverse: ${li.variant_id}`
+        });
+      }
+
+      const price = getVariantPriceForStore(variant, store_id);
+      if (!Number.isFinite(price)) {
+        return res.status(500).json({
+          error: "PRICE_NOT_AVAILABLE",
+          details: `Could not determine price for variant_id: ${li.variant_id}`,
+          variant_preview: variant
+        });
+      }
+
+      const qty = toNumber(li.quantity);
+      total += price * qty;
+    }
+
+    // 3) Armar payload del receipt
+    const payload = {
+      store_id,
+      note: note || "Pedido GPT - Mostrador",
+      line_items: line_items.map((li) => ({
+        variant_id: li.variant_id,
+        quantity: toNumber(li.quantity),
+        line_note: li.line_note || ""
+      })),
+      payments: [
+        {
+          payment_type_id,
+          money_amount: Number(total),
+          paid_at: new Date().toISOString()
+        }
+      ]
+    };
+
+    // 4) Crear receipt en Loyverse
     const response = await fetch("https://api.loyverse.com/v1.0/receipts", {
       method: "POST",
       headers: {
@@ -131,7 +175,11 @@ const payload = {
 
     const text = await response.text();
     let data;
-    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { raw: text };
+    }
 
     if (!response.ok) {
       return res.status(400).json({
@@ -151,113 +199,111 @@ const payload = {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Rolly middleware running on port ${PORT}`);
-});
+// Optional: list items (simple view)
 app.get("/loyverse/items", async (req, res) => {
   try {
+    const token = process.env.LOYVERSE_TOKEN;
+
     const response = await fetch("https://api.loyverse.com/v1.0/items", {
       headers: {
-        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       }
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      return res.status(500).json({ error: text });
-    }
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
 
-    const data = await response.json();
-
-    const simplified = data.items.map(item => ({
-      item_id: item.id,
-      name: item.item_name,
-      variants: item.variants.map(v => ({
-        variant_id: v.id,
-        variant_name: v.variant_name,
-        price: v.price
-      }))
-    }));
-
-    res.json(simplified);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-app.get("/loyverse/variants", async (req, res) => {
-  try {
-    const response = await fetch("https://api.loyverse.com/v1.0/variants", {
-      headers: {
-        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
-        "Content-Type": "application/json"
-      }
-    });
-
-    const data = await response.json();
-
-    // Si Loyverse devuelve error, lo devolvemos tal cual para ver el detalle
     if (!response.ok) {
       return res.status(500).json({ error: data });
     }
 
-    // La lista puede venir con distintas llaves
-    const list =
-      data.variants ||
-      data.item_variants ||
-      data.items ||
-      data.data ||
-      [];
-
-    const simplified = list.map(v => ({
-      variant_id: v.id,
-      item_id: v.item_id,
-      variant_name: v.variant_name,
-      price: v.price
+    const simplified = (data.items || []).map((item) => ({
+      item_id: item.id,
+      name: item.item_name
     }));
 
-    res.json({
-      count: simplified.length,
-      variants: simplified
-    });
+    res.json({ count: simplified.length, items: simplified });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
+// Optional: list variants (simple view)
+app.get("/loyverse/variants", async (req, res) => {
+  try {
+    const token = process.env.LOYVERSE_TOKEN;
+
+    const response = await fetch("https://api.loyverse.com/v1.0/variants", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      }
+    });
+
+    const text = await response.text();
+    let data;
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+
+    if (!response.ok) {
+      return res.status(500).json({ error: data });
+    }
+
+    const list = data.variants || [];
+
+    const simplified = list.map((v) => ({
+      variant_id: v.id,
+      item_id: v.item_id,
+      variant_name: v.variant_name,
+      default_price: v.default_price ?? null,
+      store_prices: v.stores || []
+    }));
+
+    res.json({ count: simplified.length, variants: simplified });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Catalog: variants + item_name
 app.get("/loyverse/catalog", async (req, res) => {
   try {
-    // 1) Traer items (para obtener nombre por item_id)
+    const token = process.env.LOYVERSE_TOKEN;
+
+    // Items
     const itemsResp = await fetch("https://api.loyverse.com/v1.0/items", {
       headers: {
-        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       }
     });
-    const itemsData = await itemsResp.json();
+    const itemsText = await itemsResp.text();
+    let itemsData;
+    try { itemsData = JSON.parse(itemsText); } catch { itemsData = { raw: itemsText }; }
     if (!itemsResp.ok) return res.status(500).json({ error: itemsData });
 
-    // 2) Crear mapa item_id -> item_name
     const itemsList = itemsData.items || [];
-    const itemNameById = new Map(itemsList.map(i => [i.id, i.item_name]));
+    const itemNameById = new Map(itemsList.map((i) => [i.id, i.item_name]));
 
-    // 3) Traer variants (para obtener variant_id por item_id)
+    // Variants
     const varResp = await fetch("https://api.loyverse.com/v1.0/variants", {
       headers: {
-        Authorization: `Bearer ${process.env.LOYVERSE_TOKEN}`,
+        Authorization: `Bearer ${token}`,
         "Content-Type": "application/json"
       }
     });
-    const varData = await varResp.json();
+    const varText = await varResp.text();
+    let varData;
+    try { varData = JSON.parse(varText); } catch { varData = { raw: varText }; }
     if (!varResp.ok) return res.status(500).json({ error: varData });
 
     const variantsList = varData.variants || [];
 
-    // 4) Enriquecer: item_name + variant_id
-    const enriched = variantsList.map(v => ({
+    const enriched = variantsList.map((v) => ({
       item_id: v.item_id,
       item_name: itemNameById.get(v.item_id) || null,
       variant_id: v.id,
-      // dejamos el objeto completo por si Loyverse trae más campos (ej. option values)
       raw: v
     }));
 
@@ -265,4 +311,8 @@ app.get("/loyverse/catalog", async (req, res) => {
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
+});
+
+app.listen(PORT, () => {
+  console.log(`Rolly middleware running on port ${PORT}`);
 });
