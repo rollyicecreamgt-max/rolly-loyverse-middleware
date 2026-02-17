@@ -33,7 +33,6 @@ app.get("/health", (req, res) => {
 
 /**
  * GET /loyverse/payment_types
- * Sirve para ver los payment types que la API te está devolviendo (Efectivo, Tarjeta, Bitcoin, etc.)
  */
 app.get("/loyverse/payment_types", async (req, res) => {
   try {
@@ -53,7 +52,7 @@ app.get("/loyverse/payment_types", async (req, res) => {
 
 /**
  * GET /loyverse/catalog
- * Devuelve tu “catálogo” (item_id + item_name + variant_id + raw) como vos lo pegaste.
+ * Usa /items + /variants
  */
 app.get("/loyverse/catalog", async (req, res) => {
   try {
@@ -65,15 +64,14 @@ app.get("/loyverse/catalog", async (req, res) => {
     const itemNameById = new Map(items.map((i) => [i.id, i.item_name]));
 
     // 2) Variants (para variant_id, option1_value, default_price, etc.)
-    // OJO: usamos /item_variants (es el que ya te funcionó)
-    const varsResp = await api.get("/item_variants");
-    const variants = varsResp.data?.item_variants || [];
+    const varsResp = await api.get("/variants");
+    const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
     const enriched = variants.map((v) => ({
       item_id: v.item_id,
       item_name: itemNameById.get(v.item_id) || null,
       raw: {
-        // mantenemos el formato que vos pegaste
+        // Para mantener tu formato previo:
         variant_id: v.id,
         item_id: v.item_id,
         sku: v.sku ?? null,
@@ -84,7 +82,7 @@ app.get("/loyverse/catalog", async (req, res) => {
         barcode: v.barcode ?? null,
         cost: v.cost ?? 0,
         purchase_cost: v.purchase_cost ?? null,
-        default_pricing_type: v.default_pricing_type ?? null,
+        default_pricing_type: v.default_pricing_type ?? v.pricing_type ?? null,
         default_price: v.default_price ?? v.price ?? 0,
         stores: v.stores ?? [],
         created_at: v.created_at ?? null,
@@ -107,17 +105,13 @@ app.get("/loyverse/catalog", async (req, res) => {
 
 /**
  * POST /orders
- * Recibe:
  * {
- *   "note": "texto",
- *   "payment_type_id": "UUID",
- *   "line_items": [
- *      { "variant_id": "UUID", "quantity": 1, "line_note": "..." },
- *      ...
- *   ]
+ *   note: "...",
+ *   payment_type_id: "UUID",
+ *   line_items: [{variant_id:"UUID", quantity:1, line_note:"..."}]
  * }
  *
- * Crea un receipt en Loyverse calculando el TOTAL con precios reales desde /item_variants.
+ * Calcula total con /variants y crea /receipts
  */
 app.post("/orders", async (req, res) => {
   try {
@@ -131,11 +125,6 @@ app.post("/orders", async (req, res) => {
       return res.status(400).json({
         error: "INVALID_PAYLOAD",
         details: "line_items must be a non-empty array",
-        example: {
-          note: "Pedido GPT - Mostrador",
-          payment_type_id: "UUID",
-          line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Helado Natural - Vainilla - Normal" }],
-        },
       });
     }
 
@@ -156,8 +145,8 @@ app.post("/orders", async (req, res) => {
     }
 
     // 1) Traer variants para precios
-    const varsResp = await api.get("/item_variants");
-    const variants = varsResp.data?.item_variants || [];
+    const varsResp = await api.get("/variants");
+    const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
     const priceByVariantId = new Map(
       variants
@@ -165,7 +154,7 @@ app.post("/orders", async (req, res) => {
         .map((v) => [v.id, Number(v.default_price ?? v.price ?? 0)])
     );
 
-    // 2) Calcular total según lo que mandaron en line_items
+    // 2) Calcular total
     let total = 0;
     for (const li of line_items) {
       const price = priceByVariantId.get(li.variant_id);
@@ -217,4 +206,3 @@ app.post("/orders", async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Rolly middleware running on port ${PORT}`);
 });
-
