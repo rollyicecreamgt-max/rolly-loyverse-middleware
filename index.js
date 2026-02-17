@@ -71,7 +71,7 @@ for (const [i, p] of payments.entries()) {
 
     // Payload a Loyverse (receipt)
   // 1) Traer variants para precios (una vez por request)
-const variantsResp = await fetch("https://api.loyverse.com/v1.0/variants", {
+const variantsResp = await fetch("https://api.loyverse.com/v1.0/item_variants", {
   headers: {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json"
