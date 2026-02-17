@@ -112,6 +112,90 @@ app.get("/loyverse/catalog", async (req, res) => {
 });
 
 /**
+ * GET /loyverse/catalog/all
+ * Igual que /loyverse/catalog pero trae TODO paginando /items y /variants
+ */
+app.get("/loyverse/catalog/all", async (req, res) => {
+  try {
+    const api = loyverseClient();
+
+    // 1) Items paginados (para nombres)
+    let items = [];
+    let cursorItems = null;
+
+    while (true) {
+      const r = await api.get("/items", {
+        params: cursorItems ? { cursor: cursorItems } : {},
+      });
+
+      const batch = r.data?.items || [];
+      items = items.concat(batch);
+
+      cursorItems = r.data?.cursor || null;
+      if (!cursorItems) break;
+    }
+
+    const itemNameById = new Map(items.map((i) => [i.id, i.item_name]));
+
+    // 2) Variants paginados
+    let variants = [];
+    let cursorVars = null;
+
+    while (true) {
+      const r = await api.get("/variants", {
+        params: cursorVars ? { cursor: cursorVars } : {},
+      });
+
+      const batch = r.data?.variants || r.data?.item_variants || [];
+      variants = variants.concat(batch);
+
+      cursorVars = r.data?.cursor || null;
+      if (!cursorVars) break;
+    }
+
+    // 3) Enriquecer (manteniendo tu estructura con raw)
+    const enriched = variants.map((v) => {
+      const vid = v.id ?? v.variant_id;
+
+      return {
+        item_id: v.item_id,
+        item_name: itemNameById.get(v.item_id) || null,
+        variant_id: vid,
+
+        raw: {
+          variant_id: vid,
+          item_id: v.item_id,
+          sku: v.sku ?? null,
+          reference_variant_id: v.reference_variant_id ?? null,
+          option1_value: v.option1_value ?? null,
+          option2_value: v.option2_value ?? null,
+          option3_value: v.option3_value ?? null,
+          barcode: v.barcode ?? null,
+          cost: v.cost ?? 0,
+          purchase_cost: v.purchase_cost ?? null,
+          default_pricing_type: v.default_pricing_type ?? v.pricing_type ?? null,
+          default_price: v.default_price ?? v.price ?? 0,
+          stores: v.stores ?? [],
+          created_at: v.created_at ?? null,
+          updated_at: v.updated_at ?? null,
+          deleted_at: v.deleted_at ?? null,
+        },
+      };
+    });
+
+    res.json({ count: enriched.length, variants: enriched });
+  } catch (err) {
+    const status = err?.response?.status || 500;
+    res.status(status).json({
+      error: "LOYVERSE_CATALOG_ALL_ERROR",
+      status,
+      loyverse: err?.response?.data || null,
+      message: err?.message || String(err),
+    });
+  }
+});
+
+/**
  * POST /orders
  * {
  *   note: "...",
