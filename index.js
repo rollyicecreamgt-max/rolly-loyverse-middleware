@@ -252,19 +252,19 @@ app.post("/orders", async (req, res) => {
     }
 
     // 1) Traer variants para precios
-    const varsResp = await api.get("/variants");
-    const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
+const varsResp = await api.get("/variants");
+const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
-    // NOTA: algunos responses traen v.id, otros v.variant_id
-    const priceByVariantId = new Map(
-      variants
-        .map((v) => ({
-          id: v?.id ?? v?.variant_id,
-          price: Number(v?.default_price ?? v?.price ?? 0),
-        }))
-        .filter((x) => x.id)
-        .map((x) => [x.id, x.price])
-    );
+// Soporta respuestas con v.id O v.variant_id
+const priceByVariantId = new Map(
+  variants
+    .map((v) => {
+      const vid = v?.id ?? v?.variant_id;
+      const price = Number(v?.default_price ?? v?.price ?? 0);
+      return [vid, price];
+    })
+    .filter(([vid]) => Boolean(vid))
+);
 
     // 2) Calcular total
     let total = 0;
