@@ -23,7 +23,7 @@ app.post("/orders", async (req, res) => {
     if (!store_id) return res.status(500).json({ error: "Missing LOYVERSE_STORE_ID env var" });
     if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
 
-    const { line_items, note, payments } = req.body || {};
+    const { line_items, note, payment_type_id } = req.body || {};
 
     // Validación mínima
     if (!Array.isArray(line_items) || line_items.length === 0) {
@@ -39,13 +39,13 @@ app.post("/orders", async (req, res) => {
       });
     }
     
-if (!Array.isArray(payments) || payments.length === 0) {
+if (!payment_type_id || typeof payment_type_id !== "string") {
   return res.status(400).json({
     error: "Invalid payload",
-    details: "payments must be a non-empty array",
+    details: "payment_type_id is required (string)",
     example: {
       line_items: [{ variant_id: "UUID", quantity: 1, line_note: "Helado Natural - Vainilla - Normal" }],
-      payments: [{ payment_type_id: "UUID", money_amount: 27.00 }],
+      payment_type_id: "UUID",
       note: "Pedido GPT - Mostrador"
     }
   });
@@ -70,20 +70,54 @@ for (const [i, p] of payments.entries()) {
     }
 
     // Payload a Loyverse (receipt)
-    const payload = {
+  // 1) Traer variants para precios (una vez por request)
+const variantsResp = await fetch("https://api.loyverse.com/v1.0/variants", {
+  headers: {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json"
+  }
+});
+
+const variantsData = await variantsResp.json();
+if (!variantsResp.ok) {
+  return res.status(500).json({ error: "FAILED_TO_LOAD_VARIANTS", loyverse: variantsData });
+}
+
+const variantsList = variantsData.variants || [];
+const priceByVariantId = new Map(
+  variantsList
+    .filter(v => v?.id)
+    .map(v => [v.id, Number(v.default_price ?? v.price ?? 0)])
+);
+
+// 2) Calcular total
+let total = 0;
+for (const li of line_items) {
+  const price = priceByVariantId.get(li.variant_id);
+  if (price === undefined) {
+    return res.status(400).json({
+      error: "UNKNOWN_VARIANT_ID",
+      details: `variant_id not found in Loyverse: ${li.variant_id}`
+    });
+  }
+  total += price * li.quantity;
+}
+
+const payload = {
   store_id,
   note: note || "Pedido GPT - Mostrador",
   line_items: line_items.map((li) => ({
     variant_id: li.variant_id,
     quantity: li.quantity,
-    // Si Loyverse ignora line_note, igual lo dejamos para ticket/registro.
     line_note: li.line_note || ""
   })),
-  payments: payments.map((p) => ({
-    payment_type_id: p.payment_type_id,
-    money_amount: Number(p.money_amount),
-    paid_at: p.paid_at || new Date().toISOString()
-  }))
+  payments: [
+    {
+      payment_type_id,
+      money_amount: Number(total),
+      paid_at: new Date().toISOString()
+    }
+  ]
 };
 
     const response = await fetch("https://api.loyverse.com/v1.0/receipts", {
