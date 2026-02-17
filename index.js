@@ -151,10 +151,14 @@ app.post("/orders", async (req, res) => {
       if (!li?.variant_id || typeof li.variant_id !== "string") {
         return res.status(400).json({ error: "INVALID_LINE_ITEMS", details: `line_items[${i}].variant_id required` });
       }
-      if (typeof li.quantity !== "number" || li.quantity <= 0) {
-        return res.status(400).json({ error: "INVALID_LINE_ITEMS", details: `line_items[${i}].quantity must be > 0` });
-      }
-    }
+const qty = Number(li.quantity);
+if (!Number.isFinite(qty) || qty <= 0) {
+  return res.status(400).json({
+    error: "INVALID_LINE_ITEMS",
+    details: `line_items[${i}].quantity must be a number > 0`,
+  });
+}
+li.quantity = qty;
 
     // 1) Traer variants para precios
     const varsResp = await api.get("/variants");
@@ -211,12 +215,26 @@ console.log("priceByVariantId sample:", Array.from(priceByVariantId.entries()).s
 
     const receiptResp = await api.post("/receipts", payload);
 
+// log de auditoría
+console.log("🧾 Receipt created in Loyverse:", {
+  receipt_number: receiptResp.data?.receipt_number,
+  receipt_id: receiptResp.data?.id,
+  total: total,
+  payment_type_id: payment_type_id,
+});
+
     return res.status(200).json({
       ok: true,
       receipt: receiptResp.data,
       computed_total: total,
     });
   } catch (err) {
+    console.error("❌ Order failed", {
+  body: req.body,
+  message: err?.message,
+  loyverse: err?.response?.data || null,
+});
+
     const status = err?.response?.status || 500;
     return res.status(status).json({
       error: "LOYVERSE_ORDER_ERROR",
