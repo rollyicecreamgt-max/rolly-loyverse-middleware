@@ -72,7 +72,7 @@ app.get("/loyverse/catalog", async (req, res) => {
 
   return {
     item_id: v.item_id,
-    item_name: itemNameById.get(v.item_id) || null,
+    item_name: itemNameById.get(v.item_id) || v.item_name || v.name || v.variant_name || null,
 
     // <- FIX 1: que venga arriba también
     variant_id: vid,
