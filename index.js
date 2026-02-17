@@ -67,29 +67,37 @@ app.get("/loyverse/catalog", async (req, res) => {
     const varsResp = await api.get("/variants");
     const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
 
-    const enriched = variants.map((v) => ({
+    const enriched = variants.map((v) => {
+  const vid = v.id ?? v.variant_id; // <- FIX 1: tomar el que exista
+
+  return {
+    item_id: v.item_id,
+    item_name: itemNameById.get(v.item_id) || null,
+
+    // <- FIX 1: que venga arriba también
+    variant_id: vid,
+
+    raw: {
+      // Para mantener tu formato previo:
+      variant_id: vid,
       item_id: v.item_id,
-      item_name: itemNameById.get(v.item_id) || null,
-      raw: {
-        // Para mantener tu formato previo:
-        variant_id: v.id,
-        item_id: v.item_id,
-        sku: v.sku ?? null,
-        reference_variant_id: v.reference_variant_id ?? null,
-        option1_value: v.option1_value ?? null,
-        option2_value: v.option2_value ?? null,
-        option3_value: v.option3_value ?? null,
-        barcode: v.barcode ?? null,
-        cost: v.cost ?? 0,
-        purchase_cost: v.purchase_cost ?? null,
-        default_pricing_type: v.default_pricing_type ?? v.pricing_type ?? null,
-        default_price: v.default_price ?? v.price ?? 0,
-        stores: v.stores ?? [],
-        created_at: v.created_at ?? null,
-        updated_at: v.updated_at ?? null,
-        deleted_at: v.deleted_at ?? null,
-      },
-    }));
+      sku: v.sku ?? null,
+      reference_variant_id: v.reference_variant_id ?? null,
+      option1_value: v.option1_value ?? null,
+      option2_value: v.option2_value ?? null,
+      option3_value: v.option3_value ?? null,
+      barcode: v.barcode ?? null,
+      cost: v.cost ?? 0,
+      purchase_cost: v.purchase_cost ?? null,
+      default_pricing_type: v.default_pricing_type ?? v.pricing_type ?? null,
+      default_price: v.default_price ?? v.price ?? 0,
+      stores: v.stores ?? [],
+      created_at: v.created_at ?? null,
+      updated_at: v.updated_at ?? null,
+      deleted_at: v.deleted_at ?? null
+    }
+  };
+});
 
     res.json({ count: enriched.length, variants: enriched });
   } catch (err) {
