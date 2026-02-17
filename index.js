@@ -229,6 +229,12 @@ console.log("🧾 Receipt created in Loyverse:", {
       computed_total: total,
     });
   } catch (err) {
+    console.error("❌ Order failed", {
+  body: req.body,
+  message: err?.message,
+  loyverse: err?.response?.data || null,
+});
+    
     const status = err?.response?.status || 500;
     return res.status(status).json({
       error: "LOYVERSE_ORDER_ERROR",
