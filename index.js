@@ -23,7 +23,7 @@ app.post("/orders", async (req, res) => {
     if (!store_id) return res.status(500).json({ error: "Missing LOYVERSE_STORE_ID env var" });
     if (!token) return res.status(500).json({ error: "Missing LOYVERSE_TOKEN env var" });
 
-    const { line_items, note, payment_type_id } = req.body || {};
+    const { line_items, note, payments = [] } = req.body || {};
 
     // Validación mínima
     if (!Array.isArray(line_items) || line_items.length === 0) {
