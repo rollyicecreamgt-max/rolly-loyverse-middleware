@@ -195,6 +195,26 @@ app.get("/loyverse/catalog/all", async (req, res) => {
   }
 });
 
+async function fetchAllVariants(api) {
+  const all = [];
+  let cursor = null;
+
+  do {
+    const params = { limit: 250 };
+    if (cursor) params.cursor = cursor;
+
+    const r = await api.get("/variants", { params });
+
+    const chunk = r.data?.variants || r.data?.item_variants || [];
+    all.push(...chunk);
+
+    // Loyverse usa cursor para paginar
+    cursor = r.data?.cursor || r.data?.next_cursor || r.data?.meta?.cursor || null;
+  } while (cursor);
+
+  return all;
+}
+
 /**
  * POST /orders
  * {
@@ -252,18 +272,17 @@ app.post("/orders", async (req, res) => {
     }
 
     // 1) Traer variants para precios
-const varsResp = await api.get("/variants");
-const variants = varsResp.data?.variants || varsResp.data?.item_variants || [];
+const variants = await fetchAllVariants(api);
 
 // Soporta respuestas con v.id O v.variant_id
 const priceByVariantId = new Map(
   variants
-    .map((v) => {
-      const vid = v?.id ?? v?.variant_id;
-      const price = Number(v?.default_price ?? v?.price ?? 0);
-      return [vid, price];
-    })
-    .filter(([vid]) => Boolean(vid))
+    .map((v) => ({
+      id: v.id ?? v.variant_id,
+      price: Number(v.default_price ?? v.price ?? 0),
+    }))
+    .filter((x) => x.id)
+    .map((x) => [x.id, x.price])
 );
 
     // 2) Calcular total
